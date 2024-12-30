@@ -23,6 +23,7 @@ func newCommands() *commands {
 	m := map[string]func(*state, command) error{
 		"login":    handlerLogin,
 		"register": handlerRegister,
+		"reset":    handleReset,
 	}
 	return &commands{
 		m: m,
@@ -89,4 +90,13 @@ func handlerRegister(s *state, cmd command) error {
 	}
 	fmt.Println("user", name, "created")
 	return err
+}
+
+func handleReset(s *state, _ command) error {
+	err := s.db.DeleteUsers(context.Background())
+	if err != nil {
+		return fmt.Errorf("could not delete all users: %v", err)
+	}
+	fmt.Println("true reset: deleted all users")
+	return nil
 }
