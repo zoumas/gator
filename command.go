@@ -24,6 +24,7 @@ func newCommands() *commands {
 		"login":    handlerLogin,
 		"register": handlerRegister,
 		"reset":    handleReset,
+		"users":    handleUsers,
 	}
 	return &commands{
 		m: m,
@@ -98,5 +99,22 @@ func handleReset(s *state, _ command) error {
 		return fmt.Errorf("could not delete all users: %v", err)
 	}
 	fmt.Println("true reset: deleted all users")
+	return nil
+}
+
+func handleUsers(s *state, _ command) error {
+	us, err := s.db.GetUsers(context.Background())
+	if err != nil {
+		return err
+	}
+
+	for _, u := range us {
+		if u.Name == s.cfg.CurrentUserName {
+			fmt.Println("*", u.Name, "(current)")
+		} else {
+			fmt.Println("*", u.Name)
+		}
+	}
+
 	return nil
 }
