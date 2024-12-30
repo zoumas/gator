@@ -1,22 +1,34 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"os"
 
-	"github.com/zoumas/gator/internal/config"
+	_ "github.com/lib/pq"
 )
 
 func main() {
-	cfg, err := config.Read()
+	s, err := newState()
 	if err != nil {
 		log.Fatalln(err)
 	}
+	_ = s
 
-	err = cfg.SetUser("zoumas")
+	commandManager := newCommands()
+
+	if len(os.Args) < 2 {
+		log.Fatalln("expected command")
+	}
+	var args []string
+	if len(os.Args) > 2 {
+		args = os.Args[2:]
+	}
+	cmd := command{
+		name: os.Args[1],
+		args: args,
+	}
+	err = commandManager.run(s, cmd)
 	if err != nil {
 		log.Fatalln(err)
 	}
-
-	fmt.Println(cfg.DBURL, cfg.CurrentUserName)
 }
