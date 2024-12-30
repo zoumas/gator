@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zoumas/gator/internal/database"
+	"github.com/zoumas/gator/internal/rss"
 )
 
 type command struct {
@@ -21,18 +22,21 @@ type commands struct {
 
 func newCommands() *commands {
 	m := map[string]func(*state, command) error{
-		"login":    handlerLogin,
-		"register": handlerRegister,
-		"reset":    handleReset,
-		"users":    handleUsers,
+		"login":     handlerLogin,
+		"register":  handlerRegister,
+		"reset":     handleReset,
+		"users":     handleUsers,
+		"agg":       auth(handleAgg),
+		"addfeed":   auth(handlerAddFeed),
+		"feeds":     handlerFeeds,
+		"follow":    auth(handlerFollow),
+		"following": auth(handlerFollowing),
+		"unfollow":  auth(handlerUnfollow),
+		"scrape":    auth(scrapeFeed),
 	}
 	return &commands{
 		m: m,
 	}
-}
-
-func (c *commands) register(name string, f func(*state, command) error) {
-	c.m[name] = f
 }
 
 func (c *commands) run(s *state, cmd command) error {
@@ -116,5 +120,145 @@ func handleUsers(s *state, _ command) error {
 		}
 	}
 
+	return nil
+}
+
+func handleAgg(s *state, cmd command, u database.User) error {
+	if len(cmd.args) == 0 {
+		return errors.New("expected duration between requests")
+	}
+	d, err := time.ParseDuration(cmd.args[0])
+	if err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(d)
+	for ; ; <-ticker.C {
+		scrapeFeed(s, cmd, u)
+	}
+}
+
+func handlerAddFeed(s *state, cmd command, u database.User) error {
+	if len(cmd.args) != 2 {
+		return errors.New("expected name and url of rss feed")
+	}
+	name := cmd.args[0]
+	url := cmd.args[1]
+
+	now := time.Now().UTC()
+	f, err := s.db.CreateFeed(context.Background(), database.CreateFeedParams{
+		ID:        uuid.New(),
+		CreatedAt: now,
+		UpdatedAt: now,
+		Name:      name,
+		Url:       url,
+		UserID:    u.ID,
+	})
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: now,
+		UpdatedAt: now,
+		UserID:    u.ID,
+		FeedID:    f.ID,
+	})
+	return err
+}
+
+func handlerFeeds(s *state, _ command) error {
+	feeds, err := s.db.GetFeeds(context.Background())
+	if err != nil {
+		return err
+	}
+
+	for _, f := range feeds {
+		fmt.Println(f.Name, f.Url, f.Owner)
+	}
+	return nil
+}
+
+func handlerFollow(s *state, cmd command, u database.User) error {
+	if len(cmd.args) != 1 {
+		return errors.New("expected url")
+	}
+	url := cmd.args[0]
+
+	f, err := s.db.GetFeedByURL(context.Background(), url)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	r, err := s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: now,
+		UpdatedAt: now,
+		UserID:    u.ID,
+		FeedID:    f.ID,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(r.UserName, "followed", r.FeedName)
+
+	return nil
+}
+
+func handlerFollowing(s *state, _ command, u database.User) error {
+	ffs, err := s.db.GetFeedFollowsForUser(context.Background(), u.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, ff := range ffs {
+		fmt.Println(ff.FeedName)
+	}
+	return nil
+}
+
+func auth(handler func(s *state, cmd command, u database.User) error) func(*state, command) error {
+	return func(s *state, cmd command) error {
+		u, err := s.db.GetUser(context.Background(), s.cfg.CurrentUserName)
+		if err != nil {
+			return err
+		}
+		return handler(s, cmd, u)
+	}
+}
+
+func handlerUnfollow(s *state, cmd command, u database.User) error {
+	if len(cmd.args) == 0 {
+		return errors.New("expected url of feed to unfollow")
+	}
+	url := cmd.args[0]
+	return s.db.UnfollowFeedForUser(context.Background(), database.UnfollowFeedForUserParams{
+		UserID: u.ID,
+		Url:    url,
+	})
+}
+
+func scrapeFeed(s *state, cmd command, u database.User) error {
+	feed, err := s.db.GetNextFeedToFetch(context.Background())
+	if err != nil {
+		return err
+	}
+	err = s.db.MarkFeedFetched(context.Background(), feed.ID)
+	if err != nil {
+		return err
+	}
+
+	rssFeed, err := rss.Fetch(context.Background(), feed.Url)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(rssFeed.Channel.Title, rssFeed.Channel.Description)
+	for _, item := range rssFeed.Channel.Item {
+		fmt.Println(item.Title)
+	}
 	return nil
 }
