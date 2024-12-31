@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +36,7 @@ func newCommands() *commands {
 		"following": auth(handlerFollowing),
 		"unfollow":  auth(handlerUnfollow),
 		"scrape":    auth(scrapeFeed),
+		"browse":    auth(handlerBrowse),
 	}
 	return &commands{
 		m: m,
@@ -256,9 +260,50 @@ func scrapeFeed(s *state, cmd command, u database.User) error {
 		return err
 	}
 
-	fmt.Println(rssFeed.Channel.Title, rssFeed.Channel.Description)
 	for _, item := range rssFeed.Channel.Item {
-		fmt.Println(item.Title)
+		now := time.Now().UTC()
+		_, err := s.db.CreatePost(context.Background(), database.CreatePostParams{
+			ID:          uuid.New(),
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			Title:       item.Title,
+			Url:         item.Link,
+			Description: item.Description,
+			PublishedAt: item.PubDate,
+			FeedID:      feed.ID,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "violates unique constraint") {
+				continue
+			}
+			log.Println(err)
+		}
+	}
+	return nil
+}
+
+func handlerBrowse(s *state, cmd command, u database.User) error {
+	limit := 2
+	if len(cmd.args) > 0 {
+		var err error
+		limit, err = strconv.Atoi(cmd.args[0])
+		if err != nil {
+			return err
+		}
+	}
+
+	posts, err := s.db.GetPostsForUser(context.Background(), database.GetPostsForUserParams{
+		UserID: u.ID,
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, post := range posts {
+		fmt.Println(post.Title, post.Url)
+		fmt.Println(post.Description)
+		fmt.Println()
 	}
 	return nil
 }
